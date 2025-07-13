@@ -3,6 +3,8 @@ import json
 import urllib.parse
 import urllib.request
 import re
+import traceback
+import random
 from datetime import datetime
 
 app = Flask(__name__, template_folder='search_templates')
@@ -137,6 +139,16 @@ def extract_doctors_from_api(api_data, speciality, location):
             json.dump(api_data, f, indent=2, ensure_ascii=False)
         print("DEBUG: API-Response in debug_api_response.json gespeichert")
         
+        # Debug: Zeige die ersten paar Provider-Objekte zur Analyse
+        if isinstance(api_data, dict) and 'healthcareProviders' in api_data:
+            providers = api_data['healthcareProviders']
+            if isinstance(providers, list) and len(providers) > 0:
+                print(f"DEBUG: Erste Provider-Struktur: {json.dumps(providers[0], indent=2, ensure_ascii=False)[:500]}...")
+                # Suche nach agenda-relevanten Feldern
+                first_provider = providers[0]
+                agenda_fields = [key for key in first_provider.keys() if 'agenda' in key.lower()]
+                print(f"DEBUG: Agenda-relevante Felder im ersten Provider: {agenda_fields}")
+        
         # Die phs_proxy API hat 'healthcareProviders' als Hauptkey
         if isinstance(api_data, dict) and 'healthcareProviders' in api_data:
             healthcare_providers = api_data['healthcareProviders']
@@ -221,6 +233,34 @@ def extract_doctor_from_provider(provider_data, speciality, location):
         # Online-Buchung verfügbar
         online_booking = provider_data.get('onlineBooking', False)
         
+        # Agenda IDs extrahieren für Terminbuchung
+        agenda_ids = []
+        
+        # Hauptquelle: onlineBooking.agendaIds
+        online_booking_data = provider_data.get('onlineBooking', {})
+        if isinstance(online_booking_data, dict) and 'agendaIds' in online_booking_data:
+            agenda_ids = online_booking_data['agendaIds']
+        
+        # Fallback-Quellen
+        elif 'agendaIds' in provider_data:
+            agenda_ids = provider_data['agendaIds']
+        elif 'agenda_ids' in provider_data:
+            agenda_ids = provider_data['agenda_ids']
+        elif 'agendas' in provider_data:
+            # Falls die IDs in einem agendas-Array stehen
+            agendas = provider_data['agendas']
+            if isinstance(agendas, list):
+                agenda_ids = [agenda.get('id') for agenda in agendas if isinstance(agenda, dict) and 'id' in agenda]
+        
+        # Visit Motive ID extrahieren
+        visit_motive_id = None
+        matched_visit_motive = provider_data.get('matchedVisitMotive', {})
+        if isinstance(matched_visit_motive, dict) and 'visitMotiveId' in matched_visit_motive:
+            visit_motive_id = matched_visit_motive['visitMotiveId']
+        
+        print(f"DEBUG: Gefundene agenda_ids für {doctor_name}: {agenda_ids}")
+        print(f"DEBUG: Gefundene visit_motive_id für {doctor_name}: {visit_motive_id}")
+        
         # Validiere dass wir mindestens einen Namen haben
         if doctor_name and len(doctor_name.strip()) > 2:
             return {
@@ -233,7 +273,9 @@ def extract_doctor_from_provider(provider_data, speciality, location):
                 'phone': '',  # Nicht in der öffentlichen API verfügbar
                 'gender': gender,
                 'online_booking': online_booking,
-                'id': provider_data.get('id', '')
+                'id': provider_data.get('id', ''),
+                'agenda_ids': agenda_ids,
+                'visit_motive_id': visit_motive_id
             }
         
         print(f"DEBUG: Arzt abgelehnt - Name zu kurz oder nicht gefunden: '{doctor_name}'")
@@ -522,10 +564,6 @@ def extract_doctor_name_from_html(html_content, doctor_link):
     except Exception as e:
         print(f"Fehler beim Extrahieren des Namens: {e}")
         return None
-
-
-
-
 
 def get_booking_url_from_doctor_page(doctor_url):
     """
@@ -1000,5 +1038,565 @@ def create_generic_location_object(location_name):
         }
     }
 
-if __name__ == '__main__':
-    app.run(debug=True, host='0.0.0.0', port=5001)
+def get_doctor_availability(agenda_ids, visit_motive_id=5101729, insurance_sector='public'):
+    """
+    Ruft die Verfügbarkeit eines Arztes über die Doctolib-API ab
+    """
+    try:
+        from datetime import datetime
+        
+        # Validiere agenda_ids
+        if not agenda_ids:
+            print("DEBUG: Keine agenda_ids übergeben!")
+            return {
+                'success': False,
+                'error': 'Keine agenda_ids angegeben',
+                'data': None
+            }
+        
+        # Stelle sicher, dass agenda_ids eine Liste ist
+        if not isinstance(agenda_ids, list):
+            agenda_ids = [agenda_ids]
+        
+        print(f"DEBUG: Verwende agenda_ids: {agenda_ids}")
+        
+        # Heute als Startdatum
+        start_date = datetime.now().strftime('%Y-%m-%d')
+        
+        # URL für Verfügbarkeits-API
+        availability_url = 'https://www.doctolib.de/search/availabilities.json'
+        
+        # Parameter für die Verfügbarkeitsabfrage
+        agenda_ids_string = ','.join(map(str, agenda_ids))
+        params = {
+            'telehealth': 'false',
+            'limit': '3',
+            'start_date': start_date,
+            'visit_motive_id': str(visit_motive_id),
+            'agenda_ids': agenda_ids_string,
+            'insurance_sector': insurance_sector
+        }
+        
+        # Erstelle URL mit Parametern
+        param_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+        full_url = f"{availability_url}?{param_string}"
+        
+        print(f"DEBUG: Verfügbarkeits-URL: {full_url}")
+        print(f"DEBUG: agenda_ids_string: '{agenda_ids_string}'")
+        
+        # HTTP Request vorbereiten
+        headers = {
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': 'https://www.doctolib.de/'
+        }
+        
+        # HTTP Request
+        request = urllib.request.Request(full_url, headers=headers)
+        
+        with urllib.request.urlopen(request, timeout=15) as response:
+            response_data = response.read()
+            
+            # Decode mit explizitem UTF-8
+            try:
+                response_text = response_data.decode('utf-8')
+            except UnicodeDecodeError:
+                response_text = response_data.decode('latin-1')
+            
+            # Parse JSON
+            availability_data = json.loads(response_text)
+            
+            print(f"DEBUG: Verfügbarkeits-API Response Keys: {list(availability_data.keys()) if isinstance(availability_data, dict) else 'Keine Dict'}")
+            
+            return {
+                'success': True,
+                'data': availability_data,
+                'start_date': start_date
+            }
+    
+    except Exception as e:
+        print(f"DEBUG: Fehler beim Abrufen der Verfügbarkeiten: {e}")
+        return {
+            'success': False,
+            'error': str(e),
+            'data': None
+        }
+
+@app.route('/get_availability', methods=['POST'])
+def get_availability():
+    """
+    Endpoint zum Abrufen der Verfügbarkeiten für einen Arzt
+    """
+    try:
+        data = request.get_json()
+        
+        if not data:
+            return jsonify({
+                'success': False,
+                'error': 'Keine Daten empfangen'
+            })
+        
+        doctor_url = data.get('doctor_url', '')
+        agenda_ids = data.get('agenda_ids', [])
+        visit_motive_id = data.get('visit_motive_id', 5101729)
+        insurance_sector = data.get('insurance_sector', 'public')
+        '''
+        if not agenda_ids:
+            # Versuche agenda_ids aus der Arzt-URL zu extrahieren
+            agenda_ids = extract_agenda_ids_from_url(doctor_url)
+        
+        if not agenda_ids:
+            return jsonify({
+                'success': False,
+                'error': 'Keine Agenda-IDs gefunden'
+            })
+        '''
+        # Hole Verfügbarkeiten
+        availability_result = get_doctor_availability(agenda_ids, visit_motive_id, insurance_sector)
+        
+        if availability_result['success']:
+            # Verarbeite die Verfügbarkeits-Daten
+            processed_availability = process_availability_data(availability_result['data'])
+            
+            return jsonify({
+                'success': True,
+                'availability': processed_availability,
+                'start_date': availability_result['start_date'],
+                'agenda_ids': agenda_ids
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': availability_result['error']
+            })
+    
+    except Exception as e:
+        print(f"Fehler beim Abrufen der Verfügbarkeiten: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+def extract_agenda_ids_from_url(doctor_url):
+    """
+    Extrahiert Agenda-IDs aus einer Doctolib-Arzt-URL
+    """
+    try:
+        if not doctor_url:
+            return []
+        
+        # Hole die Arzt-Seite, um agenda_ids zu finden
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8'
+        }
+        
+        request = urllib.request.Request(doctor_url, headers=headers)
+        
+        with urllib.request.urlopen(request, timeout=10) as response:
+            html_content = response.read().decode('utf-8')
+            
+            # Suche nach agenda_ids im HTML
+            agenda_pattern = r'agenda_ids["\']?\s*:\s*\[([^\]]+)\]'
+            match = re.search(agenda_pattern, html_content)
+            
+            if match:
+                agenda_ids_str = match.group(1)
+                # Extrahiere Zahlen
+                agenda_ids = re.findall(r'\d+', agenda_ids_str)
+                return [int(aid) for aid in agenda_ids]
+            
+            # Alternative: Suche nach data-agenda-id Attributen
+            agenda_attr_pattern = r'data-agenda-id["\']?\s*=\s*["\']?(\d+)'
+            agenda_matches = re.findall(agenda_attr_pattern, html_content)
+            
+            if agenda_matches:
+                return [int(aid) for aid in agenda_matches]
+        
+        return []
+    
+    except Exception as e:
+        print(f"DEBUG: Fehler beim Extrahieren der Agenda-IDs: {e}")
+        return []
+
+def process_availability_data(availability_data):
+    """
+    Verarbeitet die rohen Verfügbarkeits-Daten in ein benutzerfreundliches Format
+    """
+    try:
+        if not isinstance(availability_data, dict):
+            return {'available_dates': [], 'total': 0, 'message': 'Keine Daten verfügbar'}
+        
+        # Debug: Zeige die komplette Struktur der Verfügbarkeits-Daten
+        print(f"DEBUG: Verfügbarkeits-Daten Struktur: {json.dumps(availability_data, indent=2, ensure_ascii=False)}")
+        print(f"DEBUG: Verfügbare Keys: {list(availability_data.keys())}")
+        
+        available_dates = []
+        
+        # Suche nach verfügbaren Terminen in verschiedenen möglichen Strukturen
+        
+        # 1. Verarbeite availabilities Array (wenn vorhanden)
+        if 'availabilities' in availability_data:
+            availabilities = availability_data['availabilities']
+            
+            for availability in availabilities:
+                if isinstance(availability, dict):
+                    date = availability.get('date', '')
+                    slots = availability.get('slots', [])
+                    
+                    if date and slots:
+                        formatted_slots = []
+                        for slot in slots[:5]:  # Begrenze auf 5 Termine pro Tag
+                            if isinstance(slot, dict):
+                                start_time = slot.get('start_date', slot.get('time', ''))
+                                if start_time:
+                                    # Extrahiere nur die Uhrzeit
+                                    time_part = start_time.split('T')[-1].split('+')[0][:5]
+                                    formatted_slots.append(time_part)
+                        
+                        if formatted_slots:
+                            # Formatiere das Datum benutzerfreundlich (DD.MM.YYYY)
+                            try:
+                                from datetime import datetime
+                                date_obj = datetime.strptime(date, '%Y-%m-%d')
+                                formatted_date = date_obj.strftime('%d.%m.%Y')
+                            except:
+                                formatted_date = date  # Fallback auf ursprüngliches Format
+                            
+                            available_dates.append({
+                                'date': date,  # Original ISO-Datum für JavaScript
+                                'formatted_date': formatted_date,  # Formatiertes Datum für Anzeige
+                                'slots': formatted_slots,
+                                'count': len(slots)
+                            })
+        
+        # 2. Verarbeite next_slot (falls keine Termine in availabilities gefunden wurden)
+        if not available_dates and 'next_slot' in availability_data:
+            # next_slot Struktur - zeigt den nächsten verfügbaren Termin
+            next_slot = availability_data['next_slot']
+            
+            print(f"DEBUG: next_slot gefunden: {json.dumps(next_slot, indent=2, ensure_ascii=False)}")
+            print(f"DEBUG: next_slot Typ: {type(next_slot)}")
+            print(f"DEBUG: next_slot ist leer: {not next_slot}")
+            
+            # Behandle sowohl Dict- als auch String-Format für next_slot
+            if isinstance(next_slot, str) and next_slot:
+                # next_slot ist direkt ein ISO-Datum-String
+                start_date = next_slot
+                
+                print(f"DEBUG: start_date aus next_slot String: '{start_date}'")
+                
+                if start_date:
+                    # Extrahiere Datum und Zeit
+                    if 'T' in start_date:
+                        date_part = start_date.split('T')[0]
+                        time_part = start_date.split('T')[1].split('+')[0][:5]
+                    else:
+                        date_part = start_date
+                        time_part = 'Verfügbar'
+                    
+                    # Formatiere das Datum benutzerfreundlich (DD.MM.YYYY)
+                    try:
+                        from datetime import datetime
+                        date_obj = datetime.strptime(date_part, '%Y-%m-%d')
+                        formatted_date = date_obj.strftime('%d.%m.%Y')
+                    except:
+                        formatted_date = date_part  # Fallback auf ursprüngliches Format
+                    
+                    print(f"DEBUG: Extrahiertes Datum: '{date_part}' -> Formatiert: '{formatted_date}', Zeit: '{time_part}'")
+                    
+                    available_dates.append({
+                        'date': date_part,  # Original ISO-Datum für JavaScript
+                        'formatted_date': formatted_date,  # Formatiertes Datum für Anzeige
+                        'slots': [time_part],
+                        'count': 1,
+                        'is_next_slot': True
+                    })
+                    
+                    print(f"DEBUG: next_slot String erfolgreich hinzugefügt: {formatted_date} um {time_part}")
+                else:
+                    print("DEBUG: Kein gültiger start_date String in next_slot")
+                    
+            elif isinstance(next_slot, dict) and next_slot:
+                # next_slot ist ein Dictionary (ursprüngliche Implementierung)
+                start_date = next_slot.get('start_date', '')
+                
+                print(f"DEBUG: start_date aus next_slot Dict: '{start_date}'")
+                
+                if start_date:
+                    # Extrahiere Datum und Zeit
+                    if 'T' in start_date:
+                        date_part = start_date.split('T')[0]
+                        time_part = start_date.split('T')[1].split('+')[0][:5]
+                    else:
+                        date_part = start_date
+                        time_part = 'Verfügbar'
+                    
+                    # Formatiere das Datum benutzerfreundlich (DD.MM.YYYY)
+                    try:
+                        from datetime import datetime
+                        date_obj = datetime.strptime(date_part, '%Y-%m-%d')
+                        formatted_date = date_obj.strftime('%d.%m.%Y')
+                    except:
+                        formatted_date = date_part  # Fallback auf ursprüngliches Format
+                    
+                    print(f"DEBUG: Extrahiertes Datum: '{date_part}' -> Formatiert: '{formatted_date}', Zeit: '{time_part}'")
+                    
+                    available_dates.append({
+                        'date': date_part,  # Original ISO-Datum für JavaScript
+                        'formatted_date': formatted_date,  # Formatiertes Datum für Anzeige
+                        'slots': [time_part],
+                        'count': 1,
+                        'is_next_slot': True
+                    })
+                    
+                    print(f"DEBUG: next_slot Dict erfolgreich hinzugefügt: {formatted_date} um {time_part}")
+                else:
+                    print("DEBUG: Kein start_date in next_slot Dict gefunden")
+            else:
+                print(f"DEBUG: next_slot ist weder String noch Dict oder leer. Typ: {type(next_slot)}, Inhalt: {next_slot}")
+        
+        # 3. Fallback: Verarbeite dates Array (alternative Struktur)
+        elif not available_dates and 'dates' in availability_data:
+            # Alternative Struktur
+            dates = availability_data['dates']
+            for date_info in dates:
+                if isinstance(date_info, dict):
+                    date = date_info.get('date', '')
+                    times = date_info.get('times', [])
+                    
+                    if date and times:
+                        available_dates.append({
+                            'date': date,
+                            'slots': times[:5],
+                            'count': len(times)
+                        })
+        
+        result = {
+            'available_dates': available_dates,
+            'total': len(available_dates),
+            'message': f'{len(available_dates)} verfügbare Tage gefunden' if available_dates else 'Keine Termine verfügbar'
+        }
+        
+        print(f"DEBUG: Finales Ergebnis: {json.dumps(result, indent=2, ensure_ascii=False)}")
+        return result
+    
+    except Exception as e:
+        print(f"DEBUG: Fehler beim Verarbeiten der Verfügbarkeits-Daten: {e}")
+        return {'available_dates': [], 'total': 0, 'message': 'Fehler beim Verarbeiten der Daten'}
+
+@app.route('/test_agenda_ids', methods=['POST'])
+def test_agenda_ids():
+    """Test-Endpoint um agenda_ids aus der phs_proxy API zu extrahieren"""
+    data = request.get_json()
+    location = data.get('location', 'München')
+    speciality = data.get('speciality', 'hautarzt')
+    
+    try:
+        # Führe eine normale Suche durch
+        result = search_doctors_by_location(location, speciality)
+        
+        if result['success'] and result['doctors']:
+            agenda_info = []
+            
+            for doctor in result['doctors']:
+                doctor_info = {
+                    'name': doctor.get('name', 'Unbekannt'),
+                    'agenda_ids': doctor.get('agenda_ids', []),
+                    'url': doctor.get('url', ''),
+                    'id': doctor.get('id', '')
+                }
+                agenda_info.append(doctor_info)
+            
+            return jsonify({
+                'success': True,
+                'location': location,
+                'speciality': speciality,
+                'total_doctors': len(result['doctors']),
+                'doctors_with_agenda_ids': agenda_info,
+                'agenda_ids_found': sum(1 for d in agenda_info if d['agenda_ids'])
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': result.get('error', 'Keine Ärzte gefunden'),
+                'location': location,
+                'speciality': speciality
+            })
+            
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'location': location,
+            'speciality': speciality
+        })
+
+@app.route('/test_availability_with_agenda_ids', methods=['POST'])
+def test_availability_with_agenda_ids():
+    """Test-Endpoint der agenda_ids aus der Suche nutzt und damit Verfügbarkeiten abfragt"""
+    data = request.get_json()
+    location = data.get('location', 'Berlin')
+    speciality = data.get('speciality', 'hautarzt')
+    
+    try:
+        # Führe eine normale Suche durch um agenda_ids zu bekommen
+        search_result = search_doctors_by_location(location, speciality)
+        
+        if not search_result['success'] or not search_result['doctors']:
+            return jsonify({
+                'success': False,
+                'error': 'Keine Ärzte in der Suche gefunden',
+                'location': location,
+                'speciality': speciality
+            })
+        
+        availability_results = []
+        
+        # Teste Verfügbarkeiten für die ersten 3 Ärzte mit agenda_ids
+        for i, doctor in enumerate(search_result['doctors'][:3]):
+            agenda_ids = doctor.get('agenda_ids', [])
+            
+            if not agenda_ids:
+                availability_results.append({
+                    'doctor_name': doctor.get('name', 'Unbekannt'),
+                    'doctor_id': doctor.get('id', ''),
+                    'agenda_ids': [],
+                    'availability': None,
+                    'error': 'Keine agenda_ids verfügbar'
+                })
+                continue
+            
+            print(f"DEBUG: Teste Verfügbarkeiten für {doctor.get('name')} mit agenda_ids: {agenda_ids}")
+            
+            # Verwende die visit_motive_id aus den Arztdaten oder Fallback
+            visit_motive_id = doctor.get('visit_motive_id', 5101729)
+            
+            # Hole Verfügbarkeiten mit den extrahierten agenda_ids und visit_motive_id
+            availability_result = get_doctor_availability(
+                agenda_ids=agenda_ids,
+                visit_motive_id=visit_motive_id,
+                insurance_sector='public'
+            )
+            
+            if availability_result['success']:
+                processed_availability = process_availability_data(availability_result['data'])
+                availability_results.append({
+                    'doctor_name': doctor.get('name', 'Unbekannt'),
+                    'doctor_id': doctor.get('id', ''),
+                    'agenda_ids': agenda_ids,
+                    'availability': processed_availability,
+                    'start_date': availability_result['start_date']
+                })
+            else:
+                availability_results.append({
+                    'doctor_name': doctor.get('name', 'Unbekannt'),
+                    'doctor_id': doctor.get('id', ''),
+                    'agenda_ids': agenda_ids,
+                    'availability': None,
+                    'error': availability_result.get('error', 'Unbekannter Fehler')
+                })
+        
+        return jsonify({
+            'success': True,
+            'location': location,
+            'speciality': speciality,
+            'total_doctors_searched': len(search_result['doctors']),
+            'doctors_tested': len(availability_results),
+            'availability_results': availability_results,
+            'summary': {
+                'doctors_with_agenda_ids': sum(1 for r in availability_results if r.get('agenda_ids')),
+                'successful_availability_checks': sum(1 for r in availability_results if r.get('availability')),
+                'failed_availability_checks': sum(1 for r in availability_results if r.get('error'))
+            }
+        })
+        
+    except Exception as e:
+        print(f"Fehler beim Testen der Verfügbarkeiten: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'location': location,
+            'speciality': speciality
+        })
+
+@app.route('/test_specific_availability', methods=['POST'])
+def test_specific_availability():
+    """Test-Endpoint für die spezifische Verfügbarkeits-URL"""
+    data = request.get_json()
+    
+    # Verwende die Parameter aus der URL oder Defaults
+    agenda_ids = data.get('agenda_ids', [1075438])
+    visit_motive_id = data.get('visit_motive_id', 7357793)
+    start_date = data.get('start_date', '2025-07-13')
+    insurance_sector = data.get('insurance_sector', 'public')
+    
+    try:
+        # Teste die spezifische URL
+        availability_url = 'https://www.doctolib.de/search/availabilities.json'
+        
+        agenda_ids_string = ','.join(map(str, agenda_ids))
+        params = {
+            'telehealth': 'false',
+            'limit': '3',
+            'start_date': start_date,
+            'visit_motive_id': str(visit_motive_id),
+            'agenda_ids': agenda_ids_string,
+            'insurance_sector': insurance_sector
+        }
+        
+        param_string = '&'.join([f"{k}={v}" for k, v in params.items()])
+        full_url = f"{availability_url}?{param_string}"
+        
+        print(f"DEBUG: Teste URL: {full_url}")
+        
+        headers = {
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Accept-Language': 'de-DE,de;q=0.9,en;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+            'X-Requested-With': 'XMLHttpRequest',
+            'Referer': 'https://www.doctolib.de/'
+        }
+        
+        request_obj = urllib.request.Request(full_url, headers=headers)
+        
+        with urllib.request.urlopen(request_obj, timeout=15) as response:
+            response_data = response.read()
+            
+            try:
+                response_text = response_data.decode('utf-8')
+            except UnicodeDecodeError:
+                response_text = response_data.decode('latin-1')
+            
+            # Parse JSON
+            availability_data = json.loads(response_text)
+            
+            print(f"DEBUG: Rohe API-Response: {json.dumps(availability_data, indent=2, ensure_ascii=False)}")
+            
+            # Verarbeite die Daten
+            processed_availability = process_availability_data(availability_data)
+            
+            return jsonify({
+                'success': True,
+                'url_tested': full_url,
+                'raw_data': availability_data,
+                'processed_data': processed_availability,
+                'parameters_used': params
+            })
+            
+    except Exception as e:
+        print(f"DEBUG: Fehler beim Testen der spezifischen URL: {e}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e),
+            'url_tested': full_url if 'full_url' in locals() else 'URL konnte nicht erstellt werden'
+        })
+
+# ...existing code...
