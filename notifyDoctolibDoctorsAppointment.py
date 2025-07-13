@@ -6,7 +6,6 @@ import urllib.request
 TELEGRAM_BOT_TOKEN = '8054097555:AAHWCgOOuNzC6y_D-JlYJZjx1C3H9K83j_g'
 TELEGRAM_CHAT_ID = '-4904641633'
 BOOKING_URL = 'https://www.doctolib.de/hautarzt/blaubeuren/gertraud-kraehn-senftleben/booking/availabilities?specialityId=1289&telehealth=false&placeId=practice-367592&insuranceSectorEnabled=true&insuranceSector=public&isNewPatient=true&isNewPatientBlocked=false&motiveIds%5B%5D=7357714&pid=practice-367592&insurance_sector=public&bookingFunnelSource=profile'
-AVAILABILITIES_URL = 'https://www.doctolib.de/availabilities.json?visit_motive_ids=7357714&agenda_ids=1075438&practice_ids=367592&insurance_sector=public&telehealth=false&start_date=2025-07-13&limit=5'
 MOVE_BOOKING_URL = None
 UPCOMING_DAYS = 15
 MAX_DATETIME_IN_FUTURE = datetime.today() + timedelta(days = UPCOMING_DAYS)
@@ -16,13 +15,17 @@ if not (
     TELEGRAM_BOT_TOKEN
     or TELEGRAM_CHAT_ID
     or BOOKING_URL
-    or AVAILABILITIES_URL
     ) or UPCOMING_DAYS > 15:
     exit()
 
 parsed_url = urllib.parse.urlparse(BOOKING_URL)
 path_parts = parsed_url.path.split('/')
 doctor_name = path_parts[3]
+
+# Extract all parameters from BOOKING_URL
+booking_query = dict(urllib.parse.parse_qsl(parsed_url.query))
+practice_id = booking_query.get('pid', '').replace('practice-', '')
+motive_ids = booking_query.get('motiveIds[]', '')
 
 docInfoUrl = f'https://www.doctolib.de/online_booking/api/slot_selection_funnel/v1/info.json?profile_slug={doctor_name}'
 docInfoRequest = urllib.request.Request(docInfoUrl)
@@ -61,7 +64,29 @@ if isinstance(docInfoJson, dict) and 'data' in docInfoJson:
 if not doctor_name_with_title:
     doctor_name_with_title = doctor_name
 
-urlParts = urllib.parse.urlparse(AVAILABILITIES_URL)
+# Construct AVAILABILITIES_URL dynamically using all extracted data
+if first_agenda_id and practice_id and motive_ids:
+    # Start with core parameters for availabilities API
+    availabilities_params = {
+        'visit_motive_ids': motive_ids,
+        'agenda_ids': first_agenda_id,
+        'practice_ids': practice_id
+    }
+    
+    # Add ALL other parameters from BOOKING_URL (except the ones we already handled)
+    excluded_params = {'motiveIds[]', 'pid'}  # Already handled as visit_motive_ids, agenda_ids, practice_ids
+    
+    for key, value in booking_query.items():
+        if key not in excluded_params and value:  # Only add non-empty values
+            availabilities_params[key] = value
+    
+    # Construct the URL
+    availabilities_url = 'https://www.doctolib.de/availabilities.json?' + urllib.parse.urlencode(availabilities_params)
+else:
+    print("Error: Could not extract required parameters for availabilities URL")
+    exit()
+
+urlParts = urllib.parse.urlparse(availabilities_url)
 query = dict(urllib.parse.parse_qsl(urlParts.query))
 query.update({
     'limit': UPCOMING_DAYS,
@@ -116,7 +141,12 @@ if slotInNearFutureExist:
         message += '\n'
 
 else:
-    nextSlotDatetimeIso8601 = availabilities['next_slot']
+    nextSlotDatetimeIso8601 = availabilities.get('next_slot', None)
+    if not availabilities.get('next_slot'):
+        message += f'❌ No slots available for {doctor_name_with_title}.'
+        print(message)
+        exit()
+    ''' availabilities['next_slot'] '''
     nextSlotDate = (datetime.fromisoformat(nextSlotDatetimeIso8601)
                                 .strftime('%d %B %Y'))
     message += f'🐌 slot <i>{nextSlotDate}</i> for <i>{doctor_name_with_title}</i>.'
