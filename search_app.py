@@ -7,6 +7,21 @@ import traceback
 import random
 from datetime import datetime
 
+# Optionale Geocoding-Bibliotheken
+try:
+    from geopy.geocoders import Nominatim
+    GEOPY_AVAILABLE = True
+except ImportError:
+    GEOPY_AVAILABLE = False
+    print("DEBUG: geopy nicht verfügbar. Verwende zufällige Koordinaten.")
+
+try:
+    import pgeocode
+    PGEOCODE_AVAILABLE = True
+except ImportError:
+    PGEOCODE_AVAILABLE = False
+    print("DEBUG: pgeocode nicht verfügbar.")
+
 app = Flask(__name__, template_folder='search_templates')
 
 def get_specialities():
@@ -934,20 +949,17 @@ def create_location_object(location_name):
         },
         "ulm": {
             "place": {
-                "id": 145,
-                "placeId": "ChIJa76xwh5SvkcRQKnGkCLCLfQ",
-                "name": "Ulm",
-                "nameWithPronoun": "in Ulm ",
-                "slug": "ulm",
+                "id": None,
+                "placeId": None,
+                "name": "XXX",
+                "nameWithPronoun": None,
+                "slug": None,
                 "country": "de",
-                "viewport": {
-                    "northeast": {"lat": 48.4356, "lng": 10.0463},
-                    "southwest": {"lat": 48.3668, "lng": 9.9234}
-                },
+                "viewport":  None,
                 "type": "locality",
-                "zipcodes": ["89073", "89075", "89077", "89079", "89081"],
+                "zipcodes": None,
                 "gpsPoint": {"lat": 48.3974, "lng": 9.9934},
-                "locality": "Ulm",
+                "locality": "XXX",
                 "streetName": None,
                 "streetNumber": None
             }
@@ -1004,18 +1016,171 @@ def create_location_object(location_name):
     # Fallback: Erstelle ein generisches Location-Objekt
     return create_generic_location_object(location_name)
 
+def get_coordinates_for_location(location_name):
+    """
+    Versucht GPS-Koordinaten für einen Ortsnamen oder PLZ zu ermitteln
+    Verwendet verschiedene Methoden und Bibliotheken
+    """
+    
+    # Methode 1: Mit geopy/Nominatim (OpenStreetMap)
+    if GEOPY_AVAILABLE:
+        try:
+            import time
+            geolocator = Nominatim(user_agent="doctolib_search_app")
+            
+            # Suche mit Deutschland-Kontext für bessere Ergebnisse
+            search_query = f"{location_name}, Deutschland"
+            location = geolocator.geocode(search_query, timeout=5)
+            
+            if location:
+                lat = round(location.latitude, 6)
+                lng = round(location.longitude, 6)
+                print(f"DEBUG: GPS-Koordinaten für '{location_name}' via Nominatim gefunden: {lat}, {lng}")
+                time.sleep(1)  # Rate limiting
+                return lat, lng
+            else:
+                # Fallback: Versuche nur mit Stadtname
+                location = geolocator.geocode(location_name, timeout=5)
+                if location:
+                    lat = round(location.latitude, 6)
+                    lng = round(location.longitude, 6)
+                    print(f"DEBUG: GPS-Koordinaten für '{location_name}' via Nominatim (Fallback) gefunden: {lat}, {lng}")
+                    time.sleep(1)  # Rate limiting
+                    return lat, lng
+        except Exception as e:
+            print(f"DEBUG: Fehler bei Nominatim-Geocoding: {e}")
+    
+    # Methode 2: Mit pgeocode (für deutsche Postleitzahlen)
+    if PGEOCODE_AVAILABLE:
+        try:
+            # Prüfe ob es sich um eine deutsche PLZ handelt (5 Ziffern)
+            if location_name.isdigit() and len(location_name) == 5:
+                nomi = pgeocode.Nominatim('DE')
+                location_info = nomi.query_postal_code(location_name)
+                
+                if not location_info.isna().latitude:  # Pandas NaN check
+                    lat = round(float(location_info.latitude), 6)
+                    lng = round(float(location_info.longitude), 6)
+                    city_name = location_info.place_name
+                    print(f"DEBUG: GPS-Koordinaten für PLZ '{location_name}' ({city_name}) via pgeocode gefunden: {lat}, {lng}")
+                    return lat, lng
+        except Exception as e:
+            print(f"DEBUG: Fehler bei pgeocode-Geocoding: {e}")
+    
+    # Methode 3: Einfache deutsche Städte-Datenbank (häufige Städte)
+    try:
+        german_cities = {
+            'berlin': (52.5200, 13.4050),
+            'hamburg': (53.5511, 9.9937),
+            'münchen': (48.1351, 11.5820),
+            'köln': (50.9375, 6.9603),
+            'frankfurt': (50.1109, 8.6821),
+            'stuttgart': (48.7758, 9.1829),
+            'düsseldorf': (51.2277, 6.7735),
+            'dortmund': (51.5136, 7.4653),
+            'essen': (51.4556, 7.0116),
+            'leipzig': (51.3397, 12.3731),
+            'bremen': (53.0793, 8.8017),
+            'dresden': (51.0504, 13.7373),
+            'hannover': (52.3759, 9.7320),
+            'nürnberg': (49.4521, 11.0767),
+            'duisburg': (51.4344, 6.7623),
+            'bochum': (51.4819, 7.2162),
+            'wuppertal': (51.2562, 7.1508),
+            'bielefeld': (52.0302, 8.5325),
+            'bonn': (50.7374, 7.0982),
+            'münster': (51.9607, 7.6261),
+            'karlsruhe': (49.0069, 8.4037),
+            'mannheim': (49.4875, 8.4660),
+            'augsburg': (48.3705, 10.8978),
+            'wiesbaden': (50.0782, 8.2398),
+            'gelsenkirchen': (51.5177, 7.0857),
+            'mönchengladbach': (51.1805, 6.4428),
+            'braunschweig': (52.2689, 10.5268),
+            'chemnitz': (50.8278, 12.9214),
+            'kiel': (54.3233, 10.1228),
+            'aachen': (50.7753, 6.0839),
+            'halle': (51.4969, 11.9695),
+            'magdeburg': (52.1205, 11.6276),
+            'freiburg': (47.9990, 7.8421),
+            'krefeld': (51.3388, 6.5853),
+            'lübeck': (53.8655, 10.6866),
+            'oberhausen': (51.4963, 6.8626),
+            'erfurt': (50.9848, 11.0299),
+            'mainz': (49.9929, 8.2473),
+            'rostock': (54.0887, 12.1402),
+            'kassel': (51.3127, 9.4797),
+            'hagen': (51.3670, 7.4637),
+            'hamm': (51.6806, 7.8142),
+            'saarbrücken': (49.2401, 6.9969),
+            'mülheim': (51.4266, 6.8827),
+            'potsdam': (52.3906, 13.0645),
+            'ludwigshafen': (49.4774, 8.4451),
+            'oldenburg': (53.1435, 8.2146),
+            'leverkusen': (51.0458, 6.9888),
+            'osnabrück': (52.2799, 8.0472),
+            'solingen': (51.1657, 7.067),
+            'heidelberg': (49.3988, 8.6724),
+            'herne': (51.5386, 7.2047),
+            'neuss': (51.1979, 6.6921),
+            'darmstadt': (49.8728, 8.6512),
+            'paderborn': (51.7189, 8.7575),
+            'regensburg': (49.0134, 12.1016),
+            'ingolstadt': (48.7665, 11.4257),
+            'würzburg': (49.7913, 9.9534),
+            'fürth': (49.4778, 10.9890),
+            'wolfsburg': (52.4227, 10.7865),
+            'offenbach': (50.0955, 8.7761),
+            'ulm': (48.3974, 9.9934),
+            'heilbronn': (49.1427, 9.2109),
+            'pforzheim': (48.8915, 8.6984),
+            'göttingen': (51.5412, 9.9158),
+            'bottrop': (51.5216, 6.9289),
+            'trier': (49.7596, 6.6441),
+            'recklinghausen': (51.6142, 7.1969),
+            'reutlingen': (48.4911, 9.2072),
+            'bremerhaven': (53.5396, 8.5809),
+            'koblenz': (50.3569, 7.5890),
+            'bergisch gladbach': (50.9924, 7.1401),
+            'jena': (50.9278, 11.5859),
+            'remscheid': (51.1784, 7.1896),
+            'erlangen': (49.5897, 11.0041),
+            'moers': (51.4508, 6.6268),
+            'siegen': (50.8719, 8.0243),
+            'hildesheim': (52.1561, 9.9511),
+            'salzgitter': (52.1533, 10.4003),
+        }
+        
+        location_key = location_name.lower().strip()
+        if location_key in german_cities:
+            lat, lng = german_cities[location_key]
+            print(f"DEBUG: GPS-Koordinaten für '{location_name}' aus lokaler Datenbank gefunden: {lat}, {lng}")
+            return lat, lng
+    except Exception as e:
+        print(f"DEBUG: Fehler bei lokaler Städte-Datenbank: {e}")
+    
+    print(f"DEBUG: Keine GPS-Koordinaten für '{location_name}' gefunden")
+    return None, None
+
 def create_generic_location_object(location_name):
     """
     Erstellt ein generisches Location-Objekt für unbekannte Orte
     """
-    import random
     
-    # Generiere eine zufällige ID und Koordinaten für Deutschland
-    place_id = random.randint(1000, 9999)
-    lat = round(random.uniform(47.3, 54.9), 6)  # Deutschland Breitengrad
-    lng = round(random.uniform(5.9, 15.0), 6)   # Deutschland Längengrad
+    # Versuche zuerst, echte GPS-Koordinaten zu ermitteln
+    lat, lng = get_coordinates_for_location(location_name)
     
+    if not lat or not lng:
+        # Fallback auf zufällige deutsche Koordinaten
+        lat = round(random.uniform(47.3, 54.9), 6)  # Deutschland Breitengrad
+        lng = round(random.uniform(5.9, 15.0), 6)   # Deutschland Längengrad
+        print(f"DEBUG: Verwende zufällige Koordinaten: {lat}, {lng}")
+    
+    # Erstelle Slug
     slug = location_name.lower().replace(' ', '-').replace('ä', 'ae').replace('ö', 'oe').replace('ü', 'ue').replace('ß', 'ss')
+    
+    # Generiere eine zufällige ID
+    place_id = random.randint(1000, 9999)
     
     return {
         "place": {
@@ -1067,7 +1232,8 @@ def get_doctor_availability(agenda_ids, visit_motive_id=5101729, insurance_secto
         availability_url = 'https://www.doctolib.de/search/availabilities.json'
         
         # Parameter für die Verfügbarkeitsabfrage
-        agenda_ids_string = ','.join(map(str, agenda_ids))
+        # agenda_ids müssen mit Bindestrichen getrennt werden, nicht mit Kommas
+        agenda_ids_string = '-'.join(map(str, agenda_ids))
         params = {
             'telehealth': 'false',
             'limit': '3',
@@ -1142,17 +1308,20 @@ def get_availability():
         agenda_ids = data.get('agenda_ids', [])
         visit_motive_id = data.get('visit_motive_id', 5101729)
         insurance_sector = data.get('insurance_sector', 'public')
-        '''
+        
+        print(f"DEBUG: Empfangene Parameter - agenda_ids: {agenda_ids}, visit_motive_id: {visit_motive_id}")
+        
         if not agenda_ids:
             # Versuche agenda_ids aus der Arzt-URL zu extrahieren
-            agenda_ids = extract_agenda_ids_from_url(doctor_url)
+            if doctor_url:
+                agenda_ids = extract_agenda_ids_from_url(doctor_url)
         
         if not agenda_ids:
             return jsonify({
                 'success': False,
-                'error': 'Keine Agenda-IDs gefunden'
+                'error': 'Keine Agenda-IDs gefunden. Bitte agenda_ids Parameter übergeben.'
             })
-        '''
+        
         # Hole Verfügbarkeiten
         availability_result = get_doctor_availability(agenda_ids, visit_motive_id, insurance_sector)
         
@@ -1164,7 +1333,9 @@ def get_availability():
                 'success': True,
                 'availability': processed_availability,
                 'start_date': availability_result['start_date'],
-                'agenda_ids': agenda_ids
+                'agenda_ids': agenda_ids,
+                'visit_motive_id': visit_motive_id,
+                'raw_data': availability_result['data']  # Für Debugging
             })
         else:
             return jsonify({
@@ -1174,6 +1345,7 @@ def get_availability():
     
     except Exception as e:
         print(f"Fehler beim Abrufen der Verfügbarkeiten: {e}")
+        traceback.print_exc()
         return jsonify({
             'success': False,
             'error': str(e)
@@ -1241,26 +1413,47 @@ def process_availability_data(availability_data):
         # 1. Verarbeite availabilities Array (wenn vorhanden)
         if 'availabilities' in availability_data:
             availabilities = availability_data['availabilities']
+            print(f"DEBUG: availabilities gefunden mit {len(availabilities)} Einträgen")
+            print(f"DEBUG: Komplette availabilities Struktur: {json.dumps(availabilities, indent=2, ensure_ascii=False)}")
             
-            for availability in availabilities:
+            for i, availability in enumerate(availabilities):
+                print(f"DEBUG: Verarbeite Verfügbarkeit #{i}: {availability}")
+                
                 if isinstance(availability, dict):
                     date = availability.get('date', '')
                     slots = availability.get('slots', [])
                     
-                    if date and slots:
+                    print(f"DEBUG: Verarbeite Verfügbarkeit für Datum: '{date}' mit {len(slots)} Slots")
+                    print(f"DEBUG: Slots-Inhalt: {slots}")
+                    
+                    if date:  # Datum ist erforderlich
                         formatted_slots = []
-                        for slot in slots[:5]:  # Begrenze auf 5 Termine pro Tag
-                            if isinstance(slot, dict):
-                                start_time = slot.get('start_date', slot.get('time', ''))
-                                if start_time:
-                                    # Extrahiere nur die Uhrzeit
-                                    time_part = start_time.split('T')[-1].split('+')[0][:5]
-                                    formatted_slots.append(time_part)
                         
+                        # Verarbeite Slots wenn vorhanden
+                        if slots:
+                            for slot in slots[:5]:  # Begrenze auf 5 Termine pro Tag
+                                if isinstance(slot, dict):
+                                    start_time = slot.get('start_date', slot.get('time', ''))
+                                    if start_time:
+                                        # Extrahiere nur die Uhrzeit
+                                        time_part = start_time.split('T')[-1].split('+')[0][:5]
+                                        # Validiere dass es eine echte Uhrzeit ist (HH:MM Format)
+                                        if ':' in time_part and len(time_part) == 5:
+                                            formatted_slots.append(time_part)
+                                elif isinstance(slot, str):
+                                    # Direkte Zeit-Strings
+                                    if 'T' in slot:
+                                        time_part = slot.split('T')[-1].split('+')[0][:5]
+                                        # Validiere dass es eine echte Uhrzeit ist (HH:MM Format)
+                                        if ':' in time_part and len(time_part) == 5:
+                                            formatted_slots.append(time_part)
+                                    elif ':' in slot and len(slot) <= 8:  # Direkte Uhrzeiten wie "09:30"
+                                        formatted_slots.append(slot[:5])
+                        
+                        # Nur hinzufügen wenn echte Uhrzeiten verfügbar sind
                         if formatted_slots:
                             # Formatiere das Datum benutzerfreundlich (DD.MM.YYYY)
                             try:
-                                from datetime import datetime
                                 date_obj = datetime.strptime(date, '%Y-%m-%d')
                                 formatted_date = date_obj.strftime('%d.%m.%Y')
                             except:
@@ -1270,8 +1463,13 @@ def process_availability_data(availability_data):
                                 'date': date,  # Original ISO-Datum für JavaScript
                                 'formatted_date': formatted_date,  # Formatiertes Datum für Anzeige
                                 'slots': formatted_slots,
-                                'count': len(slots)
+                                'count': len(formatted_slots)
                             })
+                            print(f"DEBUG: Verfügbarer Tag hinzugefügt: {formatted_date} mit {len(formatted_slots)} Terminen: {formatted_slots}")
+                        else:
+                            print(f"DEBUG: Überspringe Datum {date} - keine konkreten Uhrzeiten verfügbar")
+                    else:
+                        print(f"DEBUG: Überspringe Verfügbarkeit ohne Datum: {availability}")
         
         # 2. Verarbeite next_slot (falls keine Termine in availabilities gefunden wurden)
         if not available_dates and 'next_slot' in availability_data:
@@ -1289,36 +1487,35 @@ def process_availability_data(availability_data):
                 
                 print(f"DEBUG: start_date aus next_slot String: '{start_date}'")
                 
-                if start_date:
+                if start_date and 'T' in start_date:
                     # Extrahiere Datum und Zeit
-                    if 'T' in start_date:
-                        date_part = start_date.split('T')[0]
-                        time_part = start_date.split('T')[1].split('+')[0][:5]
+                    date_part = start_date.split('T')[0]
+                    time_part = start_date.split('T')[1].split('+')[0][:5]
+                    
+                    # Nur verarbeiten wenn eine echte Uhrzeit verfügbar ist
+                    if ':' in time_part and len(time_part) == 5:
+                        # Formatiere das Datum benutzerfreundlich (DD.MM.YYYY)
+                        try:
+                            date_obj = datetime.strptime(date_part, '%Y-%m-%d')
+                            formatted_date = date_obj.strftime('%d.%m.%Y')
+                        except:
+                            formatted_date = date_part  # Fallback auf ursprüngliches Format
+                        
+                        print(f"DEBUG: Extrahiertes Datum: '{date_part}' -> Formatiert: '{formatted_date}', Zeit: '{time_part}'")
+                        
+                        available_dates.append({
+                            'date': date_part,  # Original ISO-Datum für JavaScript
+                            'formatted_date': formatted_date,  # Formatiertes Datum für Anzeige
+                            'slots': [time_part],
+                            'count': 1,
+                            'is_next_slot': True
+                        })
+                        
+                        print(f"DEBUG: next_slot String erfolgreich hinzugefügt: {formatted_date} um {time_part}")
                     else:
-                        date_part = start_date
-                        time_part = 'Verfügbar'
-                    
-                    # Formatiere das Datum benutzerfreundlich (DD.MM.YYYY)
-                    try:
-                        from datetime import datetime
-                        date_obj = datetime.strptime(date_part, '%Y-%m-%d')
-                        formatted_date = date_obj.strftime('%d.%m.%Y')
-                    except:
-                        formatted_date = date_part  # Fallback auf ursprüngliches Format
-                    
-                    print(f"DEBUG: Extrahiertes Datum: '{date_part}' -> Formatiert: '{formatted_date}', Zeit: '{time_part}'")
-                    
-                    available_dates.append({
-                        'date': date_part,  # Original ISO-Datum für JavaScript
-                        'formatted_date': formatted_date,  # Formatiertes Datum für Anzeige
-                        'slots': [time_part],
-                        'count': 1,
-                        'is_next_slot': True
-                    })
-                    
-                    print(f"DEBUG: next_slot String erfolgreich hinzugefügt: {formatted_date} um {time_part}")
+                        print(f"DEBUG: next_slot String übersprungen - keine gültige Uhrzeit: '{time_part}'")
                 else:
-                    print("DEBUG: Kein gültiger start_date String in next_slot")
+                    print("DEBUG: Kein gültiger start_date String in next_slot oder kein Zeitstempel")
                     
             elif isinstance(next_slot, dict) and next_slot:
                 # next_slot ist ein Dictionary (ursprüngliche Implementierung)
@@ -1326,36 +1523,35 @@ def process_availability_data(availability_data):
                 
                 print(f"DEBUG: start_date aus next_slot Dict: '{start_date}'")
                 
-                if start_date:
+                if start_date and 'T' in start_date:
                     # Extrahiere Datum und Zeit
-                    if 'T' in start_date:
-                        date_part = start_date.split('T')[0]
-                        time_part = start_date.split('T')[1].split('+')[0][:5]
+                    date_part = start_date.split('T')[0]
+                    time_part = start_date.split('T')[1].split('+')[0][:5]
+                    
+                    # Nur verarbeiten wenn eine echte Uhrzeit verfügbar ist
+                    if ':' in time_part and len(time_part) == 5:
+                        # Formatiere das Datum benutzerfreundlich (DD.MM.YYYY)
+                        try:
+                            date_obj = datetime.strptime(date_part, '%Y-%m-%d')
+                            formatted_date = date_obj.strftime('%d.%m.%Y')
+                        except:
+                            formatted_date = date_part  # Fallback auf ursprüngliches Format
+                        
+                        print(f"DEBUG: Extrahiertes Datum: '{date_part}' -> Formatiert: '{formatted_date}', Zeit: '{time_part}'")
+                        
+                        available_dates.append({
+                            'date': date_part,  # Original ISO-Datum für JavaScript
+                            'formatted_date': formatted_date,  # Formatiertes Datum für Anzeige
+                            'slots': [time_part],
+                            'count': 1,
+                            'is_next_slot': True
+                        })
+                        
+                        print(f"DEBUG: next_slot Dict erfolgreich hinzugefügt: {formatted_date} um {time_part}")
                     else:
-                        date_part = start_date
-                        time_part = 'Verfügbar'
-                    
-                    # Formatiere das Datum benutzerfreundlich (DD.MM.YYYY)
-                    try:
-                        from datetime import datetime
-                        date_obj = datetime.strptime(date_part, '%Y-%m-%d')
-                        formatted_date = date_obj.strftime('%d.%m.%Y')
-                    except:
-                        formatted_date = date_part  # Fallback auf ursprüngliches Format
-                    
-                    print(f"DEBUG: Extrahiertes Datum: '{date_part}' -> Formatiert: '{formatted_date}', Zeit: '{time_part}'")
-                    
-                    available_dates.append({
-                        'date': date_part,  # Original ISO-Datum für JavaScript
-                        'formatted_date': formatted_date,  # Formatiertes Datum für Anzeige
-                        'slots': [time_part],
-                        'count': 1,
-                        'is_next_slot': True
-                    })
-                    
-                    print(f"DEBUG: next_slot Dict erfolgreich hinzugefügt: {formatted_date} um {time_part}")
+                        print(f"DEBUG: next_slot Dict übersprungen - keine gültige Uhrzeit: '{time_part}'")
                 else:
-                    print("DEBUG: Kein start_date in next_slot Dict gefunden")
+                    print("DEBUG: Kein start_date in next_slot Dict gefunden oder kein Zeitstempel")
             else:
                 print(f"DEBUG: next_slot ist weder String noch Dict oder leer. Typ: {type(next_slot)}, Inhalt: {next_slot}")
         
@@ -1363,17 +1559,75 @@ def process_availability_data(availability_data):
         elif not available_dates and 'dates' in availability_data:
             # Alternative Struktur
             dates = availability_data['dates']
+            print(f"DEBUG: dates Array gefunden mit {len(dates)} Einträgen")
+            
             for date_info in dates:
                 if isinstance(date_info, dict):
                     date = date_info.get('date', '')
                     times = date_info.get('times', [])
                     
                     if date and times:
-                        available_dates.append({
-                            'date': date,
-                            'slots': times[:5],
-                            'count': len(times)
-                        })
+                        # Filtere nur echte Uhrzeiten (HH:MM Format)
+                        valid_times = []
+                        for time in times[:5]:  # Begrenze auf 5 Termine
+                            if isinstance(time, str) and ':' in time and len(time) <= 8:
+                                valid_times.append(time[:5])  # Nur HH:MM
+                        
+                        # Nur hinzufügen wenn echte Uhrzeiten vorhanden sind
+                        if valid_times:
+                            # Formatiere das Datum benutzerfreundlich (DD.MM.YYYY)
+                            try:
+                                date_obj = datetime.strptime(date, '%Y-%m-%d')
+                                formatted_date = date_obj.strftime('%d.%m.%Y')
+                            except:
+                                formatted_date = date
+                            
+                            available_dates.append({
+                                'date': date,
+                                'formatted_date': formatted_date,
+                                'slots': valid_times,
+                                'count': len(valid_times)
+                            })
+                            print(f"DEBUG: Datum aus dates Array hinzugefügt: {formatted_date} mit {len(valid_times)} Terminen")
+                        else:
+                            print(f"DEBUG: Datum {date} übersprungen - keine gültigen Uhrzeiten")
+        
+        # 4. Prüfe auch auf direkte Slots in der Hauptebene
+        elif not available_dates and 'slots' in availability_data:
+            slots = availability_data['slots']
+            print(f"DEBUG: Direkte slots gefunden: {len(slots)}")
+            
+            # Gruppiere Slots nach Datum
+            slots_by_date = {}
+            for slot in slots:
+                if isinstance(slot, dict):
+                    start_date = slot.get('start_date', '')
+                    if start_date and 'T' in start_date:
+                        date_part = start_date.split('T')[0]
+                        time_part = start_date.split('T')[1].split('+')[0][:5]
+                        
+                        # Nur gültige Uhrzeiten berücksichtigen
+                        if ':' in time_part and len(time_part) == 5:
+                            if date_part not in slots_by_date:
+                                slots_by_date[date_part] = []
+                            slots_by_date[date_part].append(time_part)
+            
+            # Konvertiere zu available_dates Format
+            for date, times in slots_by_date.items():
+                if times:  # Nur wenn gültige Zeiten vorhanden sind
+                    try:
+                        date_obj = datetime.strptime(date, '%Y-%m-%d')
+                        formatted_date = date_obj.strftime('%d.%m.%Y')
+                    except:
+                        formatted_date = date
+                    
+                    available_dates.append({
+                        'date': date,
+                        'formatted_date': formatted_date,
+                        'slots': times[:5],  # Begrenze auf 5 Termine
+                        'count': len(times)
+                    })
+                    print(f"DEBUG: Direkte Slots hinzugefügt: {formatted_date} mit {len(times)} Terminen")
         
         result = {
             'available_dates': available_dates,
@@ -1386,6 +1640,7 @@ def process_availability_data(availability_data):
     
     except Exception as e:
         print(f"DEBUG: Fehler beim Verarbeiten der Verfügbarkeits-Daten: {e}")
+        traceback.print_exc()
         return {'available_dates': [], 'total': 0, 'message': 'Fehler beim Verarbeiten der Daten'}
 
 @app.route('/test_agenda_ids', methods=['POST'])
@@ -1540,7 +1795,8 @@ def test_specific_availability():
         # Teste die spezifische URL
         availability_url = 'https://www.doctolib.de/search/availabilities.json'
         
-        agenda_ids_string = ','.join(map(str, agenda_ids))
+        # agenda_ids müssen mit Bindestrichen getrennt werden, nicht mit Kommas
+        agenda_ids_string = '-'.join(map(str, agenda_ids))
         params = {
             'telehealth': 'false',
             'limit': '3',
@@ -1591,7 +1847,6 @@ def test_specific_availability():
             
     except Exception as e:
         print(f"DEBUG: Fehler beim Testen der spezifischen URL: {e}")
-        import traceback
         traceback.print_exc()
         return jsonify({
             'success': False,
@@ -1599,4 +1854,51 @@ def test_specific_availability():
             'url_tested': full_url if 'full_url' in locals() else 'URL konnte nicht erstellt werden'
         })
 
-# ...existing code...
+@app.route('/test_specific_availability_url', methods=['POST'])
+def test_specific_availability_url():
+    """Test-Endpoint für die spezifische Verfügbarkeits-URL von der Frage"""
+    try:
+        # Die Parameter aus der spezifischen URL
+        agenda_ids = [376833]
+        visit_motive_id = 2368713
+        start_date = '2025-07-13'
+        insurance_sector = 'public'
+        
+        print(f"DEBUG: Teste spezifische URL mit agenda_ids: {agenda_ids}, visit_motive_id: {visit_motive_id}")
+        
+        # Teste die Verfügbarkeits-API direkt
+        availability_result = get_doctor_availability(
+            agenda_ids=agenda_ids,
+            visit_motive_id=visit_motive_id,
+            insurance_sector=insurance_sector
+        )
+        
+        if availability_result['success']:
+            processed_availability = process_availability_data(availability_result['data'])
+            
+            return jsonify({
+                'success': True,
+                'url_tested': f'https://www.doctolib.de/search/availabilities.json?telehealth=false&limit=3&start_date={start_date}&visit_motive_id={visit_motive_id}&agenda_ids={agenda_ids[0]}&insurance_sector={insurance_sector}',
+                'raw_data': availability_result['data'],
+                'processed_data': processed_availability,
+                'parameters_used': {
+                    'agenda_ids': agenda_ids,
+                    'visit_motive_id': visit_motive_id,
+                    'start_date': start_date,
+                    'insurance_sector': insurance_sector
+                }
+            })
+        else:
+            return jsonify({
+                'success': False,
+                'error': availability_result.get('error', 'Unbekannter Fehler'),
+                'url_tested': f'https://www.doctolib.de/search/availabilities.json?telehealth=false&limit=3&start_date={start_date}&visit_motive_id={visit_motive_id}&agenda_ids={agenda_ids[0]}&insurance_sector={insurance_sector}'
+            })
+            
+    except Exception as e:
+        print(f"DEBUG: Fehler beim Testen der spezifischen URL: {e}")
+        traceback.print_exc()
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
