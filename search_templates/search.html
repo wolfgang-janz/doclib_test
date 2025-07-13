@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Doctolib Arztsuche</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #2196F3 0%, #21CBF3 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        .search-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            padding: 40px;
+            margin-bottom: 30px;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 1.2rem;
+        }
+
+        .search-form {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr auto;
+            gap: 20px;
+            align-items: end;
+            margin-bottom: 20px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        label {
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 14px;
+        }
+
+        input[type="text"], select {
+            padding: 12px 16px;
+            border: 2px solid #e1e1e1;
+            border-radius: 10px;
+            font-size: 16px;
+            transition: all 0.3s ease;
+            background: white;
+        }
+
+        input[type="text"]:focus, select:focus {
+            outline: none;
+            border-color: #2196F3;
+            box-shadow: 0 0 0 3px rgba(33, 150, 243, 0.1);
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #2196F3 0%, #21CBF3 100%);
+            color: white;
+            border: none;
+            padding: 12px 30px;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            height: fit-content;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(33, 150, 243, 0.3);
+        }
+
+        .btn:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #2196F3;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .results-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0, 0, 0, 0.1);
+            padding: 40px;
+            display: none;
+        }
+
+        .results-header {
+            margin-bottom: 30px;
+            padding-bottom: 20px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+
+        .results-header h2 {
+            color: #333;
+            font-size: 1.8rem;
+            margin-bottom: 10px;
+        }
+
+        .results-stats {
+            color: #666;
+            font-size: 1rem;
+        }
+
+        .doctor-card {
+            background: #f8f9fa;
+            border: 1px solid #e9ecef;
+            border-radius: 15px;
+            padding: 20px;
+            margin-bottom: 20px;
+            transition: all 0.3s ease;
+        }
+
+        .doctor-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 25px rgba(0, 0, 0, 0.1);
+            border-color: #2196F3;
+        }
+
+        .doctor-name {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .doctor-speciality {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 4px 12px;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            display: inline-block;
+            margin-bottom: 15px;
+        }
+
+        .doctor-practice, .doctor-address, .doctor-phone, .doctor-info {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 8px;
+        }
+
+        .doctor-practice strong, .doctor-address strong, .doctor-phone strong, .doctor-info strong {
+            color: #333;
+        }
+
+        .doctor-info {
+            color: #28a745;
+        }
+
+        .availability-container {
+            margin: 15px 0;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #e9ecef;
+        }
+
+        .availability-loading {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: #666;
+            font-size: 14px;
+        }
+
+        .spinner-small {
+            border: 2px solid #f3f3f3;
+            border-top: 2px solid #2196F3;
+            border-radius: 50%;
+            width: 16px;
+            height: 16px;
+            animation: spin 1s linear infinite;
+        }
+
+        .availability-header {
+            font-weight: bold;
+            color: #333;
+            margin-bottom: 10px;
+            font-size: 14px;
+        }
+
+        .availability-dates {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .availability-date {
+            background: white;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 13px;
+            min-width: 120px;
+        }
+
+        .availability-date-label {
+            font-weight: bold;
+            color: #2196F3;
+            margin-bottom: 4px;
+        }
+
+        .availability-slots {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 4px;
+        }
+
+        .availability-slot {
+            background: #e3f2fd;
+            color: #1976d2;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 11px;
+        }
+
+        .availability-none {
+            color: #666;
+            font-style: italic;
+            text-align: center;
+            padding: 10px;
+        }
+
+        .doctor-actions {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+        }
+
+        .btn-small {
+            padding: 8px 16px;
+            font-size: 14px;
+            border-radius: 8px;
+        }
+
+        .btn-secondary {
+            background: linear-gradient(135deg, #6c757d 0%, #495057 100%);
+        }
+
+        .btn-secondary:hover {
+            background: linear-gradient(135deg, #495057 0%, #343a40 100%);
+        }
+
+        .btn-success {
+            background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+        }
+
+        .btn-success:hover {
+            background: linear-gradient(135deg, #20c997 0%, #17a2b8 100%);
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 15px;
+            border-radius: 10px;
+            margin: 20px 0;
+            border: 1px solid #f5c6cb;
+        }
+
+        .no-results {
+            text-align: center;
+            padding: 40px;
+            color: #666;
+        }
+
+        .no-results h3 {
+            margin-bottom: 10px;
+            color: #333;
+        }
+
+        @media (max-width: 768px) {
+            .search-form {
+                grid-template-columns: 1fr;
+            }
+            
+            .search-container, .results-container {
+                padding: 20px;
+            }
+            
+            .header h1 {
+                font-size: 2rem;
+            }
+        }
+
+        .example {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            font-size: 14px;
+            border: 1px solid #e9ecef;
+        }
+
+        .example strong {
+            color: #333;
+        }
+
+        .booking-url-display {
+            background: #e8f5e8;
+            border: 1px solid #4caf50;
+            border-radius: 8px;
+            padding: 10px;
+            margin-top: 10px;
+            font-size: 12px;
+            word-break: break-all;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="search-container">
+            <div class="header">
+                <h1>🔍 Doctolib Arztsuche</h1>
+                <p>Finden Sie Ärzte in Ihrer Nähe</p>
+            </div>
+
+            <form id="searchForm" class="search-form">
+                <div class="form-group">
+                    <label for="location">Ort / PLZ</label>
+                    <input 
+                        type="text" 
+                        id="location" 
+                        name="location" 
+                        placeholder="z.B. Ulm, 89073"
+                        required
+                    >
+                </div>
+
+                <div class="form-group">
+                    <label for="speciality">Fachrichtung</label>
+                    <select id="speciality" name="speciality" required>
+                        <option value="">Bitte wählen...</option>
+                        {% for key, value in specialities.items() %}
+                        <option value="{{ key }}">{{ value }}</option>
+                        {% endfor %}
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="insurance_sector">Versicherung</label>
+                    <select id="insurance_sector" name="insurance_sector">
+                        <option value="public">Gesetzlich</option>
+                        <option value="private">Privat</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <button type="submit" class="btn">Suchen</button>
+                </div>
+            </form>
+
+            <div class="loading" id="loading">
+                <div class="spinner"></div>
+                <p>Suche nach Ärzten...</p>
+            </div>
+
+            <div class="example">
+                <strong>So funktioniert's:</strong><br>
+                1. Geben Sie Ihren Ort oder Ihre Postleitzahl ein<br>
+                2. Wählen Sie die gewünschte Fachrichtung<br>
+                3. Klicken Sie auf "Suchen"<br>
+                4. Klicken Sie auf "Termine prüfen" um verfügbare Termine zu finden
+            </div>
+        </div>
+
+        <div class="results-container" id="resultsContainer">
+            <div class="results-header">
+                <h2>Suchergebnisse</h2>
+                <div class="results-stats" id="resultsStats"></div>
+            </div>
+            <div id="resultsContent"></div>
+        </div>
+    </div>
+
+    <script>
+        document.getElementById('searchForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const location = document.getElementById('location').value.trim();
+            const speciality = document.getElementById('speciality').value;
+            const insurance_sector = document.getElementById('insurance_sector').value;
+            
+            const loadingEl = document.getElementById('loading');
+            const resultsContainer = document.getElementById('resultsContainer');
+            const resultsContent = document.getElementById('resultsContent');
+            const resultsStats = document.getElementById('resultsStats');
+            const submitBtn = document.querySelector('.btn[type="submit"]');
+            
+            if (!location || !speciality) {
+                alert('Bitte füllen Sie alle Pflichtfelder aus.');
+                return;
+            }
+            
+            // Show loading, hide results
+            loadingEl.style.display = 'block';
+            resultsContainer.style.display = 'none';
+            submitBtn.disabled = true;
+            
+            try {
+                const response = await fetch('/search', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        location: location,
+                        speciality: speciality,
+                        insurance_sector: insurance_sector
+                    })
+                });
+                
+                const data = await response.json();
+                
+                // Hide loading
+                loadingEl.style.display = 'none';
+                submitBtn.disabled = false;
+                
+                if (data.success) {
+                    // Show results
+                    resultsContainer.style.display = 'block';
+                    
+                    // Safely get speciality name
+                    const specialityOption = document.querySelector('#speciality option:checked');
+                    const specialityName = specialityOption ? specialityOption.textContent : speciality;
+                    
+                    resultsStats.innerHTML = `${data.total_found} Ärzte gefunden in <strong>${data.location}</strong> für <strong>${specialityName}</strong>`;
+                    
+                    if (data.doctors.length > 0) {
+                        resultsContent.innerHTML = data.doctors.map(doctor => {
+                            // Safely get speciality name for each doctor
+                            const doctorSpecialityOption = document.querySelector('#speciality option[value="' + doctor.speciality + '"]');
+                            const doctorSpecialityName = doctorSpecialityOption ? doctorSpecialityOption.textContent : doctor.speciality;
+                            
+                            return `
+                            <div class="doctor-card" data-doctor-url="${doctor.url || ''}">
+                                <div class="doctor-name">${doctor.name || 'Name nicht verfügbar'}</div>
+                                <div class="doctor-speciality">${doctorSpecialityName}</div>
+                                ${doctor.practice_name ? `<div class="doctor-practice"><strong>Praxis:</strong> ${doctor.practice_name}</div>` : ''}
+                                ${doctor.address ? `<div class="doctor-address"><strong>Adresse:</strong> ${doctor.address}</div>` : ''}
+                                ${doctor.phone ? `<div class="doctor-phone"><strong>Telefon:</strong> ${doctor.phone}</div>` : ''}
+                                ${doctor.gender ? `<div class="doctor-info"><strong>Geschlecht:</strong> ${doctor.gender === 'female' ? 'Weiblich' : 'Männlich'}</div>` : ''}
+                                ${doctor.online_booking ? `<div class="doctor-info"><strong>Online-Buchung:</strong> Verfügbar</div>` : ''}
+                                <div class="doctor-actions">
+                                    <a href="${doctor.url || '#'}" target="_blank" class="btn btn-small btn-secondary">
+                                        📋 Profil ansehen
+                                    </a>
+                                    <button onclick="getBookingUrl('${doctor.url || ''}', this)" class="btn btn-small btn-success">
+                                        📅 Termine prüfen
+                                    </button>
+                                </div>
+                                <div class="availability-container" id="availability-${doctor.id || Math.random()}">
+                                    <div class="availability-loading" style="display: none;">
+                                        <div class="spinner-small"></div>
+                                        <span>Lade Verfügbarkeiten...</span>
+                                    </div>
+                                </div>
+                                <div class="booking-url-container"></div>
+                            </div>
+                            `;
+                        }).join('');
+                        
+                        // Lade Verfügbarkeiten für alle Ärzte automatisch
+                        setTimeout(() => {
+                            data.doctors.forEach((doctor, index) => {
+                                if (doctor.url && doctor.agenda_ids && doctor.agenda_ids.length > 0) {
+                                    loadDoctorAvailability(doctor.url, doctor.id || index, insurance_sector, doctor.agenda_ids, doctor.visit_motive_id);
+                                }
+                            });
+                        }, 1000); // 1 Sekunde Verzögerung, um die Seite nicht zu überlasten
+                    } else {
+                        resultsContent.innerHTML = `
+                            <div class="no-results">
+                                <h3>Keine Ärzte gefunden</h3>
+                                <p>Versuchen Sie es mit einem anderen Ort oder einer anderen Fachrichtung.</p>
+                            </div>
+                        `;
+                    }
+                } else {
+                    resultsContainer.style.display = 'block';
+                    resultsContent.innerHTML = `
+                        <div class="error-message">
+                            <strong>Fehler:</strong> ${data.error}
+                        </div>
+                    `;
+                }
+                
+            } catch (error) {
+                loadingEl.style.display = 'none';
+                submitBtn.disabled = false;
+                resultsContainer.style.display = 'block';
+                resultsContent.innerHTML = `
+                    <div class="error-message">
+                        <strong>Verbindungsfehler:</strong> ${error.message}
+                    </div>
+                `;
+            }
+        });
+
+        async function loadDoctorAvailability(doctorUrl, doctorId, insuranceSector = 'public', agendaIds = [], visitMotiveId = 5101729) {
+            const availabilityContainer = document.getElementById(`availability-${doctorId}`);
+            if (!availabilityContainer) return;
+            
+            const loadingElement = availabilityContainer.querySelector('.availability-loading');
+            
+            try {
+                // Zeige Loading
+                loadingElement.style.display = 'flex';
+                
+                const response = await fetch('/get_availability', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        doctor_url: doctorUrl,
+                        insurance_sector: insuranceSector,
+                        agenda_ids: agendaIds,
+                        visit_motive_id: visitMotiveId
+                    })
+                });
+                
+                const data = await response.json();
+                
+                // Verstecke Loading
+                loadingElement.style.display = 'none';
+                
+                if (data.success && data.availability) {
+                    displayAvailability(availabilityContainer, data.availability);
+                } else {
+                    availabilityContainer.innerHTML = `
+                        <div class="availability-none">
+                            Verfügbarkeiten konnten nicht geladen werden
+                        </div>
+                    `;
+                }
+                
+            } catch (error) {
+                loadingElement.style.display = 'none';
+                availabilityContainer.innerHTML = `
+                    <div class="availability-none">
+                        Fehler beim Laden der Verfügbarkeiten
+                    </div>
+                `;
+                console.error('Availability error:', error);
+            }
+        }
+
+        function displayAvailability(container, availability) {
+            if (!availability.available_dates || availability.available_dates.length === 0) {
+                container.innerHTML = `
+                    <div class="availability-header">📅 Verfügbarkeiten</div>
+                    <div class="availability-none">Keine Termine in den nächsten Tagen verfügbar</div>
+                `;
+                return;
+            }
+            
+            const datesHtml = availability.available_dates.map(dateInfo => {
+                const slotsHtml = dateInfo.slots.map(slot => 
+                    `<span class="availability-slot">${slot}</span>`
+                ).join('');
+                
+                // Formatiere das Datum
+                let formattedDate;
+                if (dateInfo.formatted_date) {
+                    // Verwende das bereits formatierte deutsche Datum vom Backend
+                    formattedDate = dateInfo.formatted_date;
+                } else {
+                    // Fallback: Formatiere das ISO-Datum selbst
+                    const dateObj = new Date(dateInfo.date);
+                    formattedDate = dateObj.toLocaleDateString('de-DE', {
+                        weekday: 'short',
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric'
+                    });
+                }
+                
+                return `
+                    <div class="availability-date">
+                        <div class="availability-date-label">${formattedDate}</div>
+                        <div class="availability-slots">${slotsHtml}</div>
+                        ${dateInfo.count > dateInfo.slots.length ? 
+                            `<div style="font-size: 10px; color: #666; margin-top: 2px;">+${dateInfo.count - dateInfo.slots.length} weitere</div>` : ''
+                        }
+                    </div>
+                `;
+            }).join('');
+            
+            container.innerHTML = `
+                <div class="availability-header">📅 Nächste verfügbare Termine</div>
+                <div class="availability-dates">${datesHtml}</div>
+                <div style="font-size: 11px; color: #666; margin-top: 8px; text-align: center;">
+                    ${availability.message}
+                </div>
+            `;
+        }
+
+        async function getBookingUrl(doctorUrl, button) {
+            const originalText = button.innerHTML;
+            button.innerHTML = '⏳ Lade...';
+            button.disabled = true;
+            
+            const bookingContainer = button.closest('.doctor-card').querySelector('.booking-url-container');
+            
+            try {
+                const response = await fetch('/get_booking_url', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        doctor_url: doctorUrl
+                    })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    bookingContainer.innerHTML = `
+                        <div class="booking-url-display">
+                            <strong>Buchungs-URL gefunden:</strong><br>
+                            <a href="${data.booking_url}" target="_blank">${data.booking_url}</a><br>
+                            <small>Diese URL können Sie in der Hauptanwendung verwenden.</small>
+                        </div>
+                    `;
+                } else {
+                    bookingContainer.innerHTML = `
+                        <div class="error-message">
+                            Buchungs-URL konnte nicht gefunden werden. Bitte besuchen Sie die Arzt-Seite manuell.
+                        </div>
+                    `;
+                }
+                
+            } catch (error) {
+                bookingContainer.innerHTML = `
+                    <div class="error-message">
+                        Fehler beim Laden der Buchungs-URL: ${error.message}
+                    </div>
+                `;
+            } finally {
+                button.innerHTML = originalText;
+                button.disabled = false;
+            }
+        }
+    </script>
+</body>
+</html>
